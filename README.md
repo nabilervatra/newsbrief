@@ -2,6 +2,8 @@
 
 Search recent news, pick the stories you care about, and get an AI summary plus a sentiment label (positive / neutral / negative) for each. Every analysis is saved to Postgres and shown in a filterable list.
 
+**Live:** https://newsbrief-kappa.vercel.app
+
 **Stack:** Next.js 16 (TypeScript, App Router) · PostgreSQL · GNews API · OpenAI · hosted on Vercel.
 
 How it works and why it's built this way: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
@@ -42,7 +44,7 @@ createdb -h localhost -p 5433 -U postgres newsbrief
 ## Deploy to Vercel
 
 1. Import the GitHub repo in Vercel (framework is auto-detected as Next.js).
-2. **Storage → Create Database → Neon (Postgres)** and connect it to the project. This sets `DATABASE_URL`.
+2. **Storage → Create Database → Neon (Postgres)** and connect it to the project. This sets `DATABASE_URL`. Put the functions in the same region as the database (**Settings → Functions → Region**, e.g. both `iad1`). Otherwise every query crosses an ocean.
 3. Run `psql "<that DATABASE_URL>" -f schema.sql` once.
 4. Add `OPENAI_API_KEY` and `GNEWS_API_KEY` (and `OPENAI_MODEL` if needed) under **Settings → Environment Variables**, then redeploy.
 

@@ -221,6 +221,8 @@ The free tier is 100 requests/day at 1 request/second. Plain `'use cache'` is in
 
 Vercel was required. Neon is Vercel's Marketplace Postgres (Vercel Postgres moved to Neon). It sets `DATABASE_URL` automatically, has a free tier, and pools connections for serverless.
 
+**Region co-location.** The functions and the database both run in `iad1`. A request to `POST /api/analyses` makes two database round trips, so the function belongs next to the database, not next to the user: a user far away pays the distance once per request instead of once per query. The project defaulted to `lhr1` and was changed to match the database.
+
 ## 7. Security
 
 - **Secrets are server-side only.** The GNews and OpenAI keys are read from `process.env` in route handlers and never reach the browser. `.env*` is gitignored except `.env.example`.
