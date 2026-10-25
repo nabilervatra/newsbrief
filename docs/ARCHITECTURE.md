@@ -42,7 +42,9 @@ The browser only ever talks to our own API. API keys (GNews, OpenAI) and the dat
 
 | File | Role |
 | --- | --- |
-| `app/page.tsx` | The whole UI: search form, results list, analyses list with sentiment filter. Client component with plain `useState`. |
+| `app/page.tsx` | Page state and layout: search, per-article analyze and "Analyze all", the library with filters. Client component with plain `useState`. |
+| `app/components.tsx` | Presentational pieces: article card (with inline analysis), library card, mood bar, badge, skeletons, relative time. |
+| `app/globals.css` | Semantic color tokens (`bg-surface`, `text-muted`, `bg-pos`…) with dark-mode values. |
 | `app/api/articles/route.ts` | `GET /api/articles?q=`: validates the query, calls GNews (cached), normalizes the response into our `Article` shape. |
 | `app/api/analyses/route.ts` | `GET /api/analyses` lists rows. `POST /api/analyses` validates the article, dedupes by URL, fetches the full text, calls OpenAI, inserts. |
 | `lib/article.ts` | Shared types (`Article`, `Analysis`, `Sentiment`) used by both the API and the UI, plus three pure functions: `parseArticle` (input validation), `toGNewsQuery` (query escaping), `extractText` (HTML → article text). |
@@ -124,18 +126,38 @@ create table analyses (
 
 ## 5. Product & UX design
 
-The brief leaves "how the user selects an article" open. The design goal was: **analysis is something you ask for on the stories you care about, and it's never wasted or repeated.**
+The brief leaves "how the user selects an article" open. The design goal was: **analysis is something you ask for, its result appears where you asked, and it's never wasted or repeated.** The page answers two questions: *what's this story about?* (summary) and *how does the news on this topic feel?* (tone across results).
 
-- **Search first, then choose.** The page opens on a search box plus your existing analyses, so you can see past results straight away. It doesn't load headlines automatically, because that would spend a GNews request on every page view.
-- **Explicit per-article action ("Summarize & score").** I considered three options:
-  1. Auto-analyze every search result: 10 LLM calls and ~10 page fetches per search, mostly on articles you'll skim past. That's slow, costs money, and fills the database with noise.
-  2. Analyze when you open an article: clicking a headline is also how you read the source, so the two intents collide.
-  3. **An explicit button per article** (chosen). One click equals one deliberate analysis. The button shows "Analyzing…" while it runs, and errors appear inline on that card.
-- **Results know what's already analyzed.** Search results whose URL is already in the database show the sentiment badge and a **View analysis** link instead of the button. The link jumps to the saved analysis, which is highlighted with the native CSS `:target` selector, no JavaScript scroll code. This makes dedupe visible and saves pointless clicks.
-- **Analyses are the product's memory.** Newest first, each with sentiment, source, publish time, a link to the original and the summary. **Sentiment filter chips with counts** ("Negative 4") turn the label into something you can use: a quick read on how the news you follow is trending, and a way to find, say, only the positive stories.
-- **Two columns on desktop, stacked on mobile.** Results sit next to analyses, so a new analysis appears in view as soon as it's done. On phones the columns stack and the "View analysis" link takes you to the analysis.
-- **Accessibility basics.** Every control has a label. Errors use `role="alert"`. Filter chips are buttons with `aria-pressed`. Sentiment is always written out, never shown by color alone.
-- **Empty, loading and error states are all handled:** nothing searched yet, no results, no analyses yet, no analyses with this sentiment, quota reached.
+**Getting started**
+- **First visit:** a "how it works" strip (search, then pick, then get the gist) plus one-click **topic chips** (AI, Climate, Markets…). There's no blank page to stare at, and no headlines load on their own, which would spend a GNews request on every page view.
+- **Search** has a large input, a `/` shortcut to focus it, and skeleton cards while loading. The query is written to the URL (`?q=climate`), so refreshing or sharing the link keeps the search. Responses to a search you've already replaced are ignored, so a slow earlier request can't overwrite a newer one.
+
+**Choosing what to analyze.** I considered four options:
+1. Auto-analyze every result: 10 LLM calls and ~10 page fetches per search, mostly for articles you'll skim past. That's slow, costs money, and fills the library with noise.
+2. Analyze when you open an article: clicking a headline is also how you read the source, so the two intents collide.
+3. **A "Summarize & score" button on each article** (chosen).
+4. **An "Analyze all N" button for the current results** (chosen, alongside 3). It's opt-in, so it isn't option 1. It runs 3 at a time with a live "Analyzing… 5 left" count. This is how you get a topic's overall tone in one click.
+
+**Seeing the result**
+- **The analysis appears inside the card you clicked:** a sentiment badge plus the summary, with a sentiment-colored accent. While it runs, a skeleton says "Reading the article and analyzing…", which is honest about the two steps. Errors appear on that card with a **Try again** button.
+- **Topic tone bar:** once any result is analyzed, a stacked bar above the results shows the mix ("Tone of 'Climate' · 6 of 6 analyzed: 3 positive, 0 neutral, 3 negative").
+- **Already-analyzed results show their analysis straight away**, with no button and no second LLM call. Repeats are visible instead of being silently skipped.
+
+**The library** (everything saved, newest first)
+- On desktop it's a sticky sidebar, so it stays in view while you scroll results. On phones it stacks below the results, or above them when you haven't searched yet, so returning users see their library first.
+- It has an overall tone bar, sentiment filter chips, and a keyword filter over title, summary and source.
+- A "How is sentiment scored?" disclosure (native `<details>`) gives the definitions below, so the labels can be explained.
+
+**Craft**
+- Semantic color tokens with a real dark mode (it follows the OS setting).
+- Geist font and relative times ("3 hours ago", with the exact time on hover).
+- Broken thumbnails hide themselves.
+
+**Accessibility**
+- Every control has a label. Errors use `role="alert"`. Result counts are announced through a polite live region. Filter chips use `aria-pressed`. Loading regions are `aria-busy`.
+- **Sentiment never relies on color alone.** The green/red pair falls in the colorblind "warning" band of the dataviz palette check (ΔE 6.5–6.9), so every badge and legend carries a shape (▲ ● ▼) and a text label, and bar segments have 2px gaps.
+
+**Every state has a design:** first visit, searching, no results, analyzing, analysis failed, library empty, no filter matches, quota reached.
 
 **Defining "sentiment" for news.** "Sentiment" is ambiguous for journalism: is a neutral report on a disaster negative? The prompt defines it as *the overall tone of the news for a general reader*:
 
@@ -210,12 +232,21 @@ The free tier is 100 requests/day at 1 request/second. Plain `'use cache'` is in
 - **Status codes carry meaning:** `201` created vs `200` already existed, `400` for bad input, `502` when an upstream service (GNews, OpenAI) failed. Every error body is `{error}`, so the UI handles all failures with one helper.
 - **No pagination yet:** see §8.
 
-### 6.9 Frontend: one client component, Tailwind, no extra libraries
+### 6.9 Frontend: one page, Tailwind tokens, no extra libraries
 
-- No React Query, Redux or UI kit: a few `useState`s and one 6-line `api()` helper cover it.
-- Tailwind came with the Next.js scaffold, so styles live next to the markup they describe.
-- Plain `<img>` for article thumbnails: `next/image` needs every remote host allowlisted, and news images come from hundreds of CDNs.
-- Dates are formatted with `toLocaleString`, so each user sees their own locale and timezone. Every date renders client-side, so there are no hydration mismatches.
+- **State:** no React Query, Redux or UI kit. A handful of `useState`s and one 6-line `api()` helper cover it.
+  - A `Set` of pending URLs drives every loading state, whether it came from a card click or "Analyze all".
+  - An in-flight ref inside `analyze()` stops the two paths from sending the same article twice. The guard sits in the one function both paths call.
+- **"Analyze all"** is three async workers draining a shared queue: about 6 lines, no p-limit dependency. A concurrency of 3 keeps it fast without hammering publishers or OpenAI.
+- **Styling:** Tailwind (from the scaffold) with **semantic tokens** in `globals.css` (`surface`, `line`, `muted`, `pos`/`neu`/`neg`). Components never say `dark:`. Dark mode swaps token values in one media query.
+- **Dataviz:** the tone bar is a CSS flex row (`flex-grow` = count, 2px gap). No chart library for three segments.
+- **Native features first:**
+  - `Intl.RelativeTimeFormat` for "3 hours ago"
+  - `<details>` for the sentiment explainer
+  - `type="search"` for the clear button
+  - `history.replaceState` for shareable URLs
+  - Plain `<img>` for thumbnails, because `next/image` needs every remote host allowlisted and news images come from hundreds of CDNs.
+- **No hydration mismatches:** dates render only for data fetched client-side.
 
 ### 6.10 Hosting: Vercel + Neon
 
@@ -254,4 +285,10 @@ Vercel was required. Neon is Vercel's Marketplace Postgres (Vercel Postgres move
   - analyze → `201`, same article again → `200` with no second LLM call
   - invalid input → `400`
   - LLM failure → `502` with nothing written
-  - UI flow in headless Chrome at desktop and phone width (filters, "View analysis" jump, no horizontal overflow)
+  - UI flow in headless Chrome at desktop and phone width, light and dark:
+    - topic chip search with skeletons, and `?q=` surviving a reload
+    - `/` shortcut
+    - inline analysis, plus "Analyze all" running 3 at a time with a live count
+    - topic tone bar
+    - each sentiment filter showing only matching cards, and the keyword filter's no-match state
+    - no horizontal overflow, no console errors

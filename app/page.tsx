@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Analysis, Article, Sentiment } from "@/lib/article";
+import { AnalysisCard, ArticleCard, MoodBar, SENTIMENTS, SearchIcon, SkeletonCard, Spinner } from "./components";
 
-const FILTERS = ["all", "positive", "neutral", "negative"] as const;
-const TONE: Record<Sentiment, string> = {
-  positive: "bg-emerald-100 text-emerald-800",
-  neutral: "bg-stone-200 text-stone-700",
-  negative: "bg-rose-100 text-rose-800",
-};
+const TOPICS = ["Artificial intelligence", "Climate", "Stock market", "Elections", "Space", "Health"];
+const STEPS = [
+  ["Search a topic", "The latest articles from thousands of sources."],
+  ["Pick a story", "Hit “Summarize & score”, or analyze the whole page at once."],
+  ["Get the gist", "A 2–3 sentence summary and the story’s tone, saved to your library."],
+];
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -17,203 +18,328 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
-const when = (d: string | null) =>
-  d ? new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
-
-const Badge = ({ sentiment }: { sentiment: Sentiment }) => (
-  <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${TONE[sentiment]}`}>{sentiment}</span>
-);
-
 export default function Home() {
   const [query, setQuery] = useState("");
+  const [searched, setSearched] = useState("");
   const [articles, setArticles] = useState<Article[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
   const [analyses, setAnalyses] = useState<Analysis[] | null>(null);
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
+  const [pending, setPending] = useState<Set<string>>(new Set());
+  const [failed, setFailed] = useState<Record<string, string>>({});
+  const [filter, setFilter] = useState<"all" | Sentiment>("all");
+  const [keyword, setKeyword] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  const latest = useRef("");
+  const inflight = useRef(new Set<string>());
+
+  async function search(raw: string) {
+    const q = raw.trim();
+    if (!q) return;
+    latest.current = q;
+    setQuery(q);
+    setSearched(q);
+    setSearching(true);
+    setError("");
+    history.replaceState(null, "", `?q=${encodeURIComponent(q)}`); // refresh / share keeps the search
+    try {
+      const { articles } = await api<{ articles: Article[] }>(`/api/articles?q=${encodeURIComponent(q)}`);
+      if (latest.current === q) setArticles(articles); // ignore responses to superseded searches
+    } catch (e) {
+      if (latest.current === q) setError((e as Error).message);
+    } finally {
+      if (latest.current === q) setSearching(false);
+    }
+  }
+
+  async function analyze(article: Article) {
+    if (inflight.current.has(article.url)) return; // card click + "Analyze all" can race on the same article
+    inflight.current.add(article.url);
+    setPending((p) => new Set(p).add(article.url));
+    setFailed((f) => ({ ...f, [article.url]: "" }));
+    try {
+      const a = await api<Analysis>("/api/analyses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(article),
+      });
+      setAnalyses((prev) => (prev?.some((p) => p.id === a.id) ? prev : [a, ...(prev ?? [])]));
+    } catch (e) {
+      setFailed((f) => ({ ...f, [article.url]: (e as Error).message }));
+    } finally {
+      inflight.current.delete(article.url);
+      setPending((p) => {
+        const next = new Set(p);
+        next.delete(article.url);
+        return next;
+      });
+    }
+  }
+
+  const byUrl = new Map(analyses?.map((a) => [a.url, a]));
+  const todo = articles?.filter((a) => !byUrl.has(a.url) && !pending.has(a.url)) ?? [];
+
+  async function analyzeAll() {
+    const queue = [...todo];
+    // 3 at a time: quick, without hammering publishers or OpenAI
+    const worker = async () => {
+      for (let a = queue.shift(); a; a = queue.shift()) await analyze(a);
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  }
 
   useEffect(() => {
     api<{ analyses: Analysis[] }>("/api/analyses")
       .then((d) => setAnalyses(d.analyses))
       .catch((e) => (setAnalyses([]), setError(e.message)));
+    const q = new URLSearchParams(location.search).get("q");
+    if (q) search(q); // restore a shared/refreshed search
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "/" && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        input.current?.focus();
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
   }, []);
 
-  async function search(e: React.FormEvent) {
-    e.preventDefault();
-    setSearching(true);
-    setError("");
-    try {
-      setArticles((await api<{ articles: Article[] }>(`/api/articles?q=${encodeURIComponent(query)}`)).articles);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  // Adds a new analysis (if not already listed) and clears the filter so it's visible.
-  function show(a: Analysis) {
-    setAnalyses((prev) => (prev?.some((p) => p.id === a.id) ? prev : [a, ...(prev ?? [])]));
-    setFilter("all");
-  }
-
-  const byUrl = new Map(analyses?.map((a) => [a.url, a]));
-  const count = (f: (typeof FILTERS)[number]) => analyses?.filter((a) => f === "all" || a.sentiment === f).length ?? 0;
-  const shown = analyses?.filter((a) => filter === "all" || a.sentiment === filter) ?? [];
+  const topicAnalyses = articles?.flatMap((a) => byUrl.get(a.url) ?? []) ?? [];
+  const kw = keyword.trim().toLowerCase();
+  const library = (analyses ?? []).filter(
+    (a) => (filter === "all" || a.sentiment === filter) && (!kw || `${a.title} ${a.summary} ${a.source}`.toLowerCase().includes(kw)),
+  );
+  const idle = !articles && !searching;
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Newsbrief</h1>
-        <p className="text-sm text-stone-600">Search recent news, then get an AI summary and sentiment for the stories you care about.</p>
+    <div className="min-h-dvh">
+      <header className="border-b border-line bg-surface">
+        <div className="mx-auto max-w-6xl px-4 pb-6 pt-5 sm:pb-8">
+          <div className="flex items-center gap-2">
+            <span className="grid size-7 place-items-center rounded-md bg-ink text-sm font-bold text-bg">N</span>
+            <span className="font-semibold tracking-tight">Newsbrief</span>
+          </div>
+          <h1 className="mt-6 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">The news, summarized, with its tone at a glance.</h1>
+          <p className="mt-1.5 text-muted">Search what’s happening, then get a short AI summary and sentiment for the stories you pick.</p>
+
+          <form
+            role="search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              search(query);
+            }}
+            className="mt-5 flex gap-2"
+          >
+            <div className="relative min-w-0 flex-1">
+              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+              <input
+                ref={input}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                required
+                maxLength={200}
+                placeholder='Search news, e.g. electric vehicles or "interest rates"'
+                aria-label="Search news"
+                className="w-full rounded-lg border border-line bg-bg py-2.5 pl-9 pr-10 outline-none transition-colors placeholder:text-muted focus:border-ink/40 focus:bg-surface"
+              />
+              {!query && (
+                <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-line px-1.5 text-xs text-muted sm:block">
+                  /
+                </kbd>
+              )}
+            </div>
+            <button
+              disabled={searching}
+              className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {searching && <Spinner />} Search
+            </button>
+          </form>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted">Try</span>
+            {TOPICS.map((t) => (
+              <button
+                key={t}
+                onClick={() => search(t)}
+                className="rounded-full border border-line px-3 py-1 transition-colors hover:border-ink/30 hover:bg-bg"
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
       </header>
 
-      <form onSubmit={search} role="search" className="mb-6 flex gap-2">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          required
-          maxLength={200}
-          placeholder='Search news, e.g. electric vehicles or "interest rates"'
-          aria-label="Search news"
-          className="min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-3 py-2 focus:border-stone-500 focus:outline-none"
-        />
-        <button disabled={searching} className="rounded-md bg-stone-900 px-4 py-2 font-medium text-white disabled:opacity-50">
-          {searching ? "Searching…" : "Search"}
-        </button>
-      </form>
+      <p aria-live="polite" className="sr-only">
+        {searching ? "Searching" : articles ? `${articles.length} articles found` : ""}
+      </p>
 
-      {error && (
-        <p role="alert" className="mb-6 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">
-          {error}
-        </p>
-      )}
-
-      <div className="grid gap-8 lg:grid-cols-2">
-        <section aria-labelledby="results">
-          <h2 id="results" className="mb-3 font-semibold">
-            Results {articles && <span className="font-normal text-stone-500">({articles.length})</span>}
-          </h2>
-          {!articles ? (
-            <p className="text-sm text-stone-500">Search a topic to see the latest articles.</p>
-          ) : !articles.length ? (
-            <p className="text-sm text-stone-500">No articles found. Try broader keywords.</p>
-          ) : (
-            <ul className="space-y-3">
-              {articles.map((a) => (
-                <ArticleCard key={a.url} article={a} analysis={byUrl.get(a.url)} onShow={show} />
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section aria-labelledby="analyses">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 id="analyses" className="font-semibold">Analyses</h2>
-            <div role="group" aria-label="Filter by sentiment" className="flex gap-1">
-              {FILTERS.map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  aria-pressed={filter === f}
-                  className="rounded-full border border-stone-300 px-3 py-1 text-xs capitalize aria-pressed:border-stone-900 aria-pressed:bg-stone-900 aria-pressed:text-white"
-                >
-                  {f} {count(f)}
-                </button>
-              ))}
-            </div>
-          </div>
-          {!analyses ? (
-            <p className="text-sm text-stone-500">Loading…</p>
-          ) : !shown.length ? (
-            <p className="text-sm text-stone-500">
-              {analyses.length ? "No analyses with this sentiment." : "Analyze an article and its summary will be saved here."}
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {shown.map((a) => (
-                <li
-                  key={a.id}
-                  id={`analysis-${a.id}`}
-                  className="scroll-mt-4 rounded-lg border border-stone-200 bg-white p-4 target:ring-2 target:ring-amber-400"
-                >
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
-                    <Badge sentiment={a.sentiment} />
-                    <span>
-                      {a.source} · {when(a.publishedAt)}
-                    </span>
-                  </div>
-                  <a href={a.url} target="_blank" rel="noreferrer" className="mt-2 block font-medium hover:underline">
-                    {a.title}
-                  </a>
-                  <p className="mt-2 text-sm leading-relaxed text-stone-700">{a.summary}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function ArticleCard({ article, analysis, onShow }: { article: Article; analysis?: Analysis; onShow: (a: Analysis) => void }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-
-  async function analyze() {
-    setPending(true);
-    setError("");
-    try {
-      onShow(
-        await api<Analysis>("/api/analyses", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(article),
-        }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <li className="flex gap-4 rounded-lg border border-stone-200 bg-white p-4">
-      {article.imageUrl && (
-        // eslint-disable-next-line @next/next/no-img-element -- arbitrary remote hosts; next/image needs each one allowlisted
-        <img src={article.imageUrl} alt="" loading="lazy" className="hidden h-20 w-28 shrink-0 rounded object-cover sm:block" />
-      )}
-      <div className="min-w-0 flex-1">
-        <a href={article.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">
-          {article.title}
-        </a>
-        <p className="mt-1 text-xs text-stone-500">
-          {article.source} · {when(article.publishedAt)}
-        </p>
-        {article.description && <p className="mt-1 line-clamp-2 text-sm text-stone-600">{article.description}</p>}
-        <div className="mt-3 flex items-center gap-3">
-          {analysis ? (
-            <a href={`#analysis-${analysis.id}`} onClick={() => onShow(analysis)} className="flex items-center gap-2 text-sm hover:underline">
-              <Badge sentiment={analysis.sentiment} /> View analysis
-            </a>
-          ) : (
-            <button
-              onClick={analyze}
-              disabled={pending}
-              className="rounded-md border border-stone-300 px-3 py-1 text-sm font-medium hover:bg-stone-100 disabled:opacity-50"
-            >
-              {pending ? "Analyzing…" : "Summarize & score"}
-            </button>
-          )}
+      <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <section aria-labelledby="results-heading" className="min-w-0">
           {error && (
-            <p role="alert" className="text-sm text-rose-700">
+            <p role="alert" className="mb-4 rounded-lg border border-neg/30 bg-neg-soft px-4 py-3 text-sm text-neg-ink">
               {error}
             </p>
           )}
-        </div>
-      </div>
-    </li>
+
+          {idle ? (
+            <>
+              <h2 id="results-heading" className="sr-only">
+                How it works
+              </h2>
+              <ol className="grid gap-3 sm:grid-cols-3">
+                {STEPS.map(([title, text], i) => (
+                  <li key={title} className="rounded-xl border border-line bg-surface p-4">
+                    <span className="grid size-6 place-items-center rounded-full bg-bg text-xs font-semibold text-muted">{i + 1}</span>
+                    <p className="mt-3 font-medium">{title}</p>
+                    <p className="mt-1 text-sm text-muted">{text}</p>
+                  </li>
+                ))}
+              </ol>
+            </>
+          ) : (
+            <>
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 id="results-heading" className="text-lg font-semibold tracking-tight">
+                    Latest on “{searched}”
+                  </h2>
+                  {articles && !searching && <p className="text-sm text-muted">{articles.length} articles, newest first</p>}
+                </div>
+                {!searching && (todo.length > 0 || pending.size > 0) && (
+                  <button
+                    onClick={analyzeAll}
+                    disabled={pending.size > 0 || !todo.length}
+                    className="inline-flex items-center gap-2 rounded-lg bg-ink px-3 py-1.5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60"
+                  >
+                    {pending.size ? (
+                      <>
+                        <Spinner /> Analyzing… {pending.size + todo.length} left
+                      </>
+                    ) : (
+                      <>
+                        <span aria-hidden>✦</span> Analyze all {todo.length}
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {!searching && topicAnalyses.length > 0 && (
+                <div className="mb-4 rounded-xl border border-line bg-surface p-4">
+                  <MoodBar
+                    analyses={topicAnalyses}
+                    label={`Tone of “${searched}” · ${topicAnalyses.length} of ${articles?.length} analyzed`}
+                  />
+                </div>
+              )}
+
+              {searching ? (
+                <ul className="space-y-3">
+                  {[0, 1, 2, 3].map((i) => (
+                    <SkeletonCard key={i} />
+                  ))}
+                </ul>
+              ) : !articles?.length ? (
+                <div className="rounded-xl border border-dashed border-line p-8 text-center">
+                  <p className="font-medium">No recent articles for “{searched}”</p>
+                  <p className="mt-1 text-sm text-muted">Try broader keywords, or check the spelling.</p>
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {articles.map((a) => (
+                    <ArticleCard
+                      key={a.url}
+                      article={a}
+                      analysis={byUrl.get(a.url)}
+                      pending={pending.has(a.url)}
+                      error={failed[a.url]}
+                      onAnalyze={() => analyze(a)}
+                    />
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </section>
+
+        <aside
+          aria-labelledby="library-heading"
+          className={`min-w-0 lg:sticky lg:top-6 lg:flex lg:max-h-[calc(100dvh-3rem)] lg:flex-col lg:self-start ${idle ? "order-first lg:order-none" : ""}`}
+        >
+          <div className="flex items-baseline justify-between">
+            <h2 id="library-heading" className="text-lg font-semibold tracking-tight">
+              Your library
+            </h2>
+            {analyses && <span className="text-sm text-muted">{analyses.length} saved</span>}
+          </div>
+
+          {analyses && analyses.length > 0 && (
+            <div className="mt-3 space-y-3">
+              <MoodBar analyses={analyses} label="Overall tone" />
+              <div role="group" aria-label="Filter by sentiment" className="flex flex-wrap gap-1.5">
+                {(["all", ...SENTIMENTS] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    aria-pressed={filter === f}
+                    className="rounded-full border border-line px-3 py-1 text-xs capitalize transition-colors hover:border-ink/30 aria-pressed:border-ink aria-pressed:bg-ink aria-pressed:text-bg"
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="search"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                placeholder="Filter by keyword"
+                aria-label="Filter library by keyword"
+                className="w-full rounded-lg border border-line bg-surface px-3 py-1.5 text-sm outline-none placeholder:text-muted focus:border-ink/40"
+              />
+            </div>
+          )}
+
+          <div className="mt-3 lg:-mx-1 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:px-1 lg:pb-2">
+            {!analyses ? (
+              <ul className="space-y-3">
+                <SkeletonCard />
+              </ul>
+            ) : !analyses.length ? (
+              <div className="rounded-xl border border-dashed border-line p-6 text-center">
+                <p className="font-medium">Nothing saved yet</p>
+                <p className="mt-1 text-sm text-muted">Every article you analyze lands here, so you can come back to it.</p>
+              </div>
+            ) : !library.length ? (
+              <p className="py-6 text-center text-sm text-muted">No saved analyses match.</p>
+            ) : (
+              <ul className="space-y-3">
+                {library.map((a) => (
+                  <AnalysisCard key={a.id} analysis={a} />
+                ))}
+              </ul>
+            )}
+
+            <details className="mt-4 text-sm text-muted">
+              <summary className="cursor-pointer select-none hover:text-ink">How is sentiment scored?</summary>
+              <ul className="mt-2 space-y-1">
+                <li>
+                  <b className="text-pos-ink">▲ Positive</b>: good news, progress, optimism.
+                </li>
+                <li>
+                  <b className="text-neu-ink">● Neutral</b>: factual, routine or mixed.
+                </li>
+                <li>
+                  <b className="text-neg-ink">▼ Negative</b>: harm, conflict, loss or criticism.
+                </li>
+              </ul>
+              <p className="mt-2">Judged by an AI model on the overall tone for a general reader, not on whether you’d agree.</p>
+            </details>
+          </div>
+        </aside>
+      </main>
+    </div>
   );
 }
