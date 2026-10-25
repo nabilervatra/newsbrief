@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Newsreader } from "next/font/google";
 import "./globals.css";
 
-const geist = Geist({ subsets: ["latin"], variable: "--font-geist" });
+const newsreader = Newsreader({ subsets: ["latin"], style: ["normal", "italic"], variable: "--font-newsreader" });
 
 export const metadata: Metadata = {
   title: "Newsbrief",
@@ -11,8 +11,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={geist.variable}>
-      <body className="bg-bg text-ink antialiased">{children}</body>
+    <html lang="en" className={newsreader.variable}>
+      <body className="bg-paper font-serif text-ink antialiased">{children}</body>
     </html>
   );
 }

@@ -11,8 +11,8 @@ How it works and why it's built this way: **[docs/ARCHITECTURE.md](docs/ARCHITEC
 ## How to use it
 
 1. Type a topic (`electric vehicles`, `"interest rates"`, `covid-19`) or click a suggested one. Press `/` to jump to search. You get the 10 latest matching articles, and the URL updates so you can share the search.
-2. Click **Summarize & score** on any article, or **Analyze all** for the whole page. Newsbrief reads the full article. The 2–3 sentence summary and sentiment appear right inside the card, and a tone bar shows the mix for the topic.
-3. **Your library** keeps everything you've analyzed, newest first, with an overall tone bar, sentiment filters and a keyword filter. Articles you've already analyzed show their result straight away, so nothing is analyzed twice.
+2. Click **Summarize** under any story, or **Summarize all** for the whole page. Newsbrief reads the full article. The 2–3 sentence summary and its sentiment appear under the story, and a tone line counts the mix for the topic.
+3. **Saved** keeps everything you've analyzed, newest first, with sentiment filters (with counts) and a keyword filter. Articles you've already analyzed show their result straight away, so nothing is analyzed twice.
 
 ## Run locally
 

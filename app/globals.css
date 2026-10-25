@@ -1,45 +1,37 @@
 @import "tailwindcss";
 
-/* Semantic tokens: components use bg-surface / text-muted / bg-pos etc., dark mode just swaps the values.
-   Sentiment hues validated for CVD with the dataviz palette checker; pos/neg sit in the 6-8 ΔE band,
-   so they always ship with a shape glyph (▲ ● ▼) and a text label, never color alone. */
 @theme {
-  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
-  --color-bg: #f7f6f3;
-  --color-surface: #ffffff;
-  --color-line: #e6e4df;
-  --color-ink: #1c1b19;
-  --color-muted: #6b6963;
-  --color-pos: #1baf7a;
-  --color-neu: #d3d1cc;
-  --color-neg: #e34948;
-  --color-pos-ink: #0b6b49;
-  --color-neu-ink: #57554f;
-  --color-neg-ink: #a82727;
-  --color-pos-soft: #e5f6ee;
-  --color-neu-soft: #f0efec;
-  --color-neg-soft: #fdeceb;
+  --font-serif: var(--font-newsreader), Georgia, serif;
+  --color-paper: #ffffff;
+  --color-ink: #121212;
+  --color-muted: #6a6a6a;
+  --color-rule: #e2e2e2;
+  --color-pos: #1a7f37;
+  --color-neu: #6a6a6a;
+  --color-neg: #b42318;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #121211;
-    --color-surface: #1a1a19;
-    --color-line: #2f2e2b;
-    --color-ink: #ecebe8;
-    --color-muted: #9c9a94;
-    --color-pos: #199e70;
-    --color-neu: #45443f;
-    --color-neg: #e66767;
-    --color-pos-ink: #74d6ab;
-    --color-neu-ink: #bdbbb5;
-    --color-neg-ink: #f4a3a3;
-    --color-pos-soft: #12291f;
-    --color-neu-soft: #252523;
-    --color-neg-soft: #301818;
+    --color-paper: #111111;
+    --color-ink: #ececec;
+    --color-muted: #9a9a9a;
+    --color-rule: #2c2c2c;
+    --color-pos: #4ac26b;
+    --color-neu: #9a9a9a;
+    --color-neg: #ff7b72;
   }
 }
 
 :root {
   color-scheme: light dark;
+}
+
+/* Small uppercase label used for bylines, section heads and text buttons. */
+@utility kicker {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
