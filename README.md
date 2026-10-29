@@ -1,6 +1,6 @@
 # Newsbrief
 
-Search recent news, pick the stories you care about, and get an AI summary plus a sentiment label (positive / neutral / negative) for each. Every analysis is saved to Postgres and shown in a filterable list.
+Search recent news, pick the articles you care about, and get an AI summary plus a sentiment label (positive / neutral / negative) for each. Every analysis is saved to Postgres and shown in a filterable list.
 
 **Live:** https://newsbrief-kappa.vercel.app
 
@@ -11,7 +11,7 @@ How it works and why it's built this way: **[docs/ARCHITECTURE.md](docs/ARCHITEC
 ## How to use it
 
 1. Type a topic (`electric vehicles`, `"interest rates"`, `covid-19`) or click a suggested one. Press `/` to jump to search. You get the 10 latest matching articles, and the URL updates so you can share the search.
-2. Click **Summarize** under any story, or **Summarize all** for the whole page. Newsbrief reads the full article. The 2–3 sentence summary and its sentiment appear under the story, and a tone line counts the mix for the topic.
+2. Click **Summarize** under any article, or **Summarize all** for the whole page. Newsbrief reads the full article. The 2–3 sentence summary and its sentiment appear under the article, and a tone line counts the mix for the topic.
 3. **Saved** keeps everything you've analyzed, newest first, with sentiment filters (with counts) and a keyword filter. Articles you've already analyzed show their result straight away, so nothing is analyzed twice.
 
 ## Run locally
@@ -62,7 +62,7 @@ Errors are always `{ "error": "message" }`. Types live in [`lib/article.ts`](lib
 // Analysis
 { "id": 1, "url": "https://…", "title": "…", "description": "…", "source": "BBC News",
   "imageUrl": "https://…", "publishedAt": "2026-10-25T09:00:00.000Z",
-  "summary": "…", "sentiment": "neutral", "createdAt": "2026-10-25T10:52:55.913Z" }
+  "summary": "…", "sentiment": "neutral", "model": "gpt-6-luna", "createdAt": "2026-10-25T10:52:55.913Z" }
 ```
 
 ## Tests

@@ -42,8 +42,8 @@ The browser only ever talks to our own API. API keys (GNews, OpenAI) and the dat
 
 | File | Role |
 | --- | --- |
-| `app/page.tsx` | Page state and layout: masthead and search, per-story "Summarize" and "Summarize all", the saved column with filters. Client component with plain `useState`. |
-| `app/components.tsx` | Presentational pieces: story item (with inline summary), saved item, byline, relative time. |
+| `app/page.tsx` | Page state and layout: masthead and search, per-article "Summarize" and "Summarize all", the saved column with filters. Client component with plain `useState`. |
+| `app/components.tsx` | Presentational pieces: article item (with inline summary), saved item, byline, relative time. |
 | `app/globals.css` | Semantic color tokens (`paper`, `ink`, `rule`, `pos`…) with dark-mode values, and the `kicker` label style. |
 | `app/api/articles/route.ts` | `GET /api/articles?q=`: validates the query, calls GNews (cached), normalizes the response into our `Article` shape. |
 | `app/api/analyses/route.ts` | `GET /api/analyses` lists rows. `POST /api/analyses` validates the article, dedupes by URL, fetches the full text, calls OpenAI, inserts. |
@@ -92,9 +92,9 @@ sequenceDiagram
 
 Details worth knowing:
 
-- **Why fetch the page at all?** On the free tier, GNews' `content` is cut off after ~200 characters (`"... [1862 chars]"`). Summarizing that is little more than restating the description. Fetching the page gives the model the whole story: in testing, a BBC article went from ~200 to 7,879 characters of input. If the site blocks us, times out, paywalls the text or renders it with JavaScript, we fall back to title + description + snippet. The prompt then tells the model to summarize only what's there and not invent details.
+- **Why fetch the page at all?** On the free tier, GNews' `content` is cut off after ~200 characters (`"... [1862 chars]"`). Summarizing that is little more than restating the description. Fetching the page gives the model the whole article: in testing, a BBC article went from ~200 to 7,879 characters of input. If the site blocks us, times out, paywalls the text or renders it with JavaScript, we fall back to title + description + snippet. The prompt then tells the model to summarize only what's there and not invent details.
 - **One LLM call, two outputs.** Summary and sentiment come back from a single request with OpenAI Structured Outputs (`response_format: json_schema`, `strict: true`). The enum is `positive | neutral | negative`, so the model can't return anything else. The database `CHECK` constraint is a second guard.
-- **Idempotent by URL.** The URL is the natural key. A repeat request returns the stored row with `200` instead of `201`. If two requests race, `on conflict … do update set url = excluded.url returning *` is a no-op update that still returns the winner's row, so neither request errors.
+- **Idempotent by URL.** The URL is the natural key. A repeat request returns the stored row with `200` instead of `201`. If two requests race, `on conflict … do update set url = excluded.url returning *` is a no-op update that still returns the winner's row, so neither request errors. Both still pay for an OpenAI call, though: see §8.
 - **Failures don't write.** If the LLM call fails, nothing is inserted. The client gets `502 {error: "Analysis failed, try again"}` and the cause goes to the server log.
 
 ### 3.3 List: `GET /api/analyses`
@@ -114,10 +114,12 @@ create table analyses (
   published_at timestamptz,
   summary text not null,
   sentiment text not null check (sentiment in ('positive', 'neutral', 'negative')),
+  model text not null,              -- which model produced the analysis
   created_at timestamptz not null default now()
 );
 ```
 
+- **Each analysis records its model** (the name OpenAI reports back, not the one requested). An analysis is never redone, so once the model or prompt changes, this column is the only way to tell old labels from new ones or re-run only the old ones. It costs one column now and can't be backfilled later.
 - **One table.** An article and its analysis are 1:1, so they live in one row. See decision 6.3.
 - **Article metadata is a snapshot** taken when it was analyzed (title, source, image), so the list renders without calling GNews again. That matters because GNews only keeps 30 days of history.
 - **The extracted article body is not stored.** It's only an input to the LLM, and storing scraped full text adds copyright questions and storage for no feature.
@@ -126,13 +128,13 @@ create table analyses (
 
 ## 5. Product & UX design
 
-The brief leaves "how the user selects an article" open. The design goal was: **analysis is something you ask for, its result appears where you asked, and it's never wasted or repeated.** The page answers two questions: *what's this story about?* (summary) and *how does the news on this topic feel?* (tone across results).
+The brief leaves "how the user selects an article" open. The design goal was: **analysis is something you ask for, its result appears where you asked, and it's never wasted or repeated.** The page answers two questions: *what's this article about?* (summary) and *how does the news on this topic feel?* (tone across results).
 
 **Visual direction: a newspaper, not a dashboard.** The content is news, so the page borrows a broadsheet's conventions instead of SaaS-template ones:
 - a serif masthead with today's date
 - headlines set in Newsreader, a typeface designed for news
 - small uppercase bylines ("BBC NEWS · 3 HOURS AGO")
-- hairline rules between stories instead of cards, shadows or rounded boxes
+- hairline rules between articles instead of cards, shadows or rounded boxes
 - text-only controls ("SUMMARIZE", "SUMMARIZE ALL 6")
 - sentiment as a colored word in the byline ("NEGATIVE · SUMMARY"), not a pill
 - no icons, no onboarding cards, no marketing copy
@@ -144,13 +146,13 @@ The first version used the common rounded-card, pill-badge, sparkle-icon look, a
 **Choosing what to analyze.** I considered four options:
 1. Auto-analyze every result: 10 LLM calls and ~10 page fetches per search, mostly for articles you'll skim past. That's slow, costs money, and fills the saved list with noise.
 2. Analyze when you open an article: clicking a headline is also how you read the source, so the two intents collide.
-3. **A "Summarize" control under each story** (chosen).
+3. **A "Summarize" control under each article** (chosen).
 4. **"Summarize all N" for the current results** (chosen, alongside 3). It's opt-in, so it isn't option 1. It runs 3 at a time with a live "Summarizing… 5 left" count. This is how you get a topic's overall tone in one click.
 
 **Seeing the result**
-- **The summary appears under the story you clicked**, labeled with its sentiment. While it runs, the line reads "Reading the article…". Errors appear in place with a **Retry** control.
+- **The summary appears under the article you clicked**, labeled with its sentiment. While it runs, the line reads "Reading the article…". Errors appear in place with a **Retry** control.
 - **Tone line:** once any result is analyzed, a line under the section head counts the mix: "Tone so far: 2 positive · 1 neutral · 3 negative (6 of 6)".
-- **Already-analyzed stories show their summary straight away**, with no control and no second LLM call.
+- **Already-analyzed articles show their summary straight away**, with no control and no second LLM call.
 
 **Saved** (everything analyzed, newest first)
 - On desktop it's a sticky right-hand column. On phones it stacks below the results, or above them before your first search, so returning users see it first.
@@ -222,7 +224,7 @@ The relationship is 1:1, and the product never re-analyzes an article, so a seco
 | Snippet only | Zero work, but the "summary" is basically the description. Fails "useful, not arbitrary". |
 | GNews paid plan (full `content`) | Cleanest, but costs money. |
 | `@mozilla/readability` + `jsdom` | Best extraction quality, but jsdom is a heavy dependency for a serverless function. |
-| **Regex paragraph extraction + snippet fallback** ✅ | About 15 lines, unit-tested, and works on most news sites. Marked in code with a `ponytail:` comment naming Readability as the upgrade. |
+| **Regex paragraph extraction + snippet fallback** ✅ | About 15 lines, unit-tested, and works on most news sites. Marked in code with a `NOTE(shortcut):` comment naming Readability as the upgrade. |
 
 ### 6.7 Caching GNews: `'use cache: remote'`
 
@@ -264,20 +266,24 @@ Vercel was required. Neon is Vercel's Marketplace Postgres (Vercel Postgres move
 - **Secrets are server-side only.** The GNews and OpenAI keys are read from `process.env` in route handlers and never reach the browser. `.env*` is gitignored except `.env.example`.
 - **SQL injection:** every query is a postgres.js tagged template, so values are always sent as parameters.
 - **Validation at the trust boundary.** `parseArticle` requires an `http(s)` URL and a title, trims and caps every string, drops unknown fields, requires a parseable `publishedAt`, and only accepts `http(s)` image URLs, which blocks `javascript:` and `data:` URLs from reaching `<img src>` or `<a href>`. React escapes all rendered text.
-- **Server-side fetch of a client-supplied URL (SSRF).** Only `http(s)`, a 5s timeout, and the response is only parsed as text. That's acceptable on Vercel, which has no private network to reach. Self-hosting on a private network would need a host allowlist (marked `ponytail:` in code).
+- **Server-side fetch of a client-supplied URL (SSRF).** Only `http(s)`, a 5s timeout, and the response is only parsed as text. That's acceptable on Vercel, which has no private network to reach. Self-hosting on a private network would need a host allowlist (marked `NOTE(shortcut):` in code).
+- **Prompt injection.** The fetched page text goes into the prompt, so a page could carry instructions aimed at the model. The damage is bounded: the model has no tools, and strict Structured Outputs only lets it return a `summary` string and one of three sentiment values. The worst case is a misleading summary or label on that one article, and React renders it as plain text, so it can't inject markup.
 - **Cost abuse (no auth, no rate limit).** The brief has no user accounts, so anyone with the URL can trigger LLM calls. The URL dedupe limits repeats. **Upgrade:** a Vercel Firewall rate-limit rule on `POST /api/analyses` (no code), or auth.
 - External links open with `rel="noreferrer"`.
 
 ## 8. Known limits and upgrade paths
 
+Each of these is a deliberate shortcut. The ones that live in code are marked `NOTE(shortcut):` there, with the upgrade path.
+
 | Limit | When it matters | Upgrade |
 | --- | --- | --- |
+| Two first-time requests for the same URL at once | Both pay for an OpenAI call and one result is discarded. Rare: the UI already stops one tab from sending a duplicate | Claim the URL before the LLM call (insert a pending row), so the second request waits for the first |
 | `GET /api/analyses` returns every row | A few hundred analyses | `limit` + cursor on `(created_at, id)` |
 | Regex text extraction | Sites with unusual markup | `@mozilla/readability` |
 | GNews free tier: 12h delay, 10 results, 100 requests/day | Real-time news, heavy use | Paid plan; only the URL/params change |
 | No auth / rate limit | Public traffic | Vercel Firewall rule; auth if analyses become per-user |
 | One analysis per article | Comparing models/prompts, refreshing old ones | `articles` + `analyses` tables, "re-analyze" action |
-| Exact-URL dedupe | Same story behind tracking params (`?utm_…`) | Normalize the URL (strip `utm_*`) before lookup |
+| Exact-URL dedupe | Same article behind tracking params (`?utm_…`) | Normalize the URL (strip `utm_*`) before lookup |
 
 ## 9. Testing
 
@@ -297,3 +303,8 @@ Vercel was required. Neon is Vercel's Marketplace Postgres (Vercel Postgres move
     - tone line
     - each sentiment filter showing only matching cards, and the keyword filter's no-match state
     - no horizontal overflow, no console errors
+
+Not covered yet:
+
+- **Route handlers and UI** are verified by hand (above), not by automated tests. **Upgrade:** route-handler tests against a local Postgres, with the OpenAI and publisher fetches stubbed.
+- **Sentiment quality** isn't measured. **Upgrade:** hand-label 30–50 articles, compare them with the model's labels (neutral vs negative is the likeliest confusion), and rerun that set on every prompt or model change.

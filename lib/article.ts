@@ -14,6 +14,7 @@ export type Analysis = Omit<Article, "content"> & {
   id: number;
   summary: string;
   sentiment: Sentiment;
+  model: string;
   createdAt: string;
 };
 
@@ -45,7 +46,7 @@ export const toGNewsQuery = (q: string) =>
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
-// ponytail: regex <p> scrape, misses JS-rendered/paywalled pages (caller falls back to the GNews snippet).
+// NOTE(shortcut): regex <p> scrape, misses JS-rendered/paywalled pages (caller falls back to the GNews snippet); upgrade is @mozilla/readability.
 // Swap for @mozilla/readability if summary quality matters more than a dependency.
 export function extractText(html: string): string {
   return [...html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, "").matchAll(/<p[\s>][\s\S]*?<\/p>/gi)]

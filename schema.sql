@@ -8,5 +8,6 @@ create table if not exists analyses (
   published_at timestamptz,
   summary text not null,
   sentiment text not null check (sentiment in ('positive', 'neutral', 'negative')),
+  model text not null, -- which model produced it; can't be reconstructed later
   created_at timestamptz not null default now()
 );

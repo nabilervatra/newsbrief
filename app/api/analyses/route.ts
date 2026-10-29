@@ -21,7 +21,7 @@ const SCHEMA = {
 // GET /api/analyses — every stored analysis, newest first
 export async function GET() {
   await connection();
-  // ponytail: returns all rows; add limit/cursor pagination once there are hundreds
+  // NOTE(shortcut): returns all rows; add limit/cursor pagination once there are hundreds
   const analyses = await sql<Analysis[]>`select * from analyses order by created_at desc`;
   return Response.json({ analyses });
 }
@@ -53,7 +53,7 @@ export async function POST(req: Request) {
 }
 
 // GNews free tier only returns a ~200 char snippet, so try the full page first.
-// ponytail: fetches a client-supplied http(s) URL server-side; fine on Vercel, add an SSRF allowlist on a private network.
+// NOTE(shortcut): fetches a client-supplied http(s) URL server-side; fine on Vercel, add an SSRF allowlist on a private network.
 async function articleText(a: Article) {
   const snippet = [a.title, a.description, a.content].filter(Boolean).join("\n\n");
   try {
@@ -68,7 +68,7 @@ async function articleText(a: Article) {
   }
 }
 
-async function analyze(text: string): Promise<{ summary: string; sentiment: Sentiment }> {
+async function analyze(text: string): Promise<{ summary: string; sentiment: Sentiment; model: string }> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -83,7 +83,8 @@ async function analyze(text: string): Promise<{ summary: string; sentiment: Sent
     }),
   });
   if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
-  const { message } = (await res.json()).choices[0];
+  const data = await res.json();
+  const { message } = data.choices[0];
   if (!message.content) throw new Error(`OpenAI refusal: ${message.refusal}`);
-  return JSON.parse(message.content);
+  return { ...JSON.parse(message.content), model: data.model }; // the model OpenAI actually served, stored with the row
 }
