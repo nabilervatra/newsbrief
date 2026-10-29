@@ -15,5 +15,9 @@ _Avoid_: Saved item, brief, result
 **Summary**:
 The two-to-three-sentence account of an Article; one part of its Analysis.
 
+**Sentiment**:
+The overall tone of one Article's news for a general reader: positive (good news, progress, optimism), negative (harm, conflict, loss, criticism) or neutral (factual, routine or mixed). Borderline Articles, such as company announcements, can fall either side of neutral.
+_Avoid_: mood, polarity, score
+
 **Story** _(not modeled yet)_:
 The set of Articles that report the same news item, such as one press release syndicated across several sites.

@@ -237,7 +237,7 @@ The free tier is 100 requests/day at 1 request/second. Plain `'use cache'` is in
   - POST only `{url}` and look the article up on the server: GNews can't look up by URL.
   - Keep search results in a server-side session: needs state and auth for no user benefit.
 
-  The cost is that metadata comes from the client, so it's validated at the boundary. See §7.
+  The cost is that metadata comes from the client. It's checked for shape at the boundary, not for truth: see §7.
 - **Status codes carry meaning:** `201` created vs `200` already existed, `400` for bad input, `502` when an upstream service (GNews, OpenAI) failed. Every error body is `{error}`, so the UI handles all failures with one helper.
 - **No pagination yet:** see §8.
 
@@ -261,11 +261,14 @@ Vercel was required. Neon is Vercel's Marketplace Postgres (Vercel Postgres move
 
 **Region co-location.** The functions and the database both run in `iad1`. A request to `POST /api/analyses` makes two database round trips, so the function belongs next to the database, not next to the user: a user far away pays the distance once per request instead of once per query. The project defaulted to `lhr1` and was changed to match the database.
 
+**Missing config fails the build.** `next.config.ts` throws if `DATABASE_URL`, `OPENAI_API_KEY` or `GNEWS_API_KEY` is empty, so a misconfigured deploy fails visibly and the previous deployment stays live. This came from a real gap: production ran for four days without the GNews key (it was waiting on sign-up), and every search returned `502`. The deploy itself looked healthy, and nothing would have flagged it if the key had been forgotten rather than pending. On Vercel, environment variables are fixed per deployment (changing one needs a redeploy), so a build-time check covers the runtime too.
+
 ## 7. Security
 
 - **Secrets are server-side only.** The GNews and OpenAI keys are read from `process.env` in route handlers and never reach the browser. `.env*` is gitignored except `.env.example`.
 - **SQL injection:** every query is a postgres.js tagged template, so values are always sent as parameters.
-- **Validation at the trust boundary.** `parseArticle` requires an `http(s)` URL and a title, trims and caps every string, drops unknown fields, requires a parseable `publishedAt`, and only accepts `http(s)` image URLs, which blocks `javascript:` and `data:` URLs from reaching `<img src>` or `<a href>`. React escapes all rendered text.
+- **Shape validation at the trust boundary.** `parseArticle` requires an `http(s)` URL and a title, trims and caps every string, drops unknown fields, drops a `publishedAt` that doesn't parse, and only accepts `http(s)` image URLs, which blocks `javascript:` and `data:` URLs from reaching `<img src>` or `<a href>`. React escapes all rendered text.
+- **Client-sent metadata isn't verified.** Validation checks shape, not truth. Anyone can POST a real article URL with a made-up title or description. The first analysis of a URL is kept and Saved is shared by everyone, so the made-up title is what every visitor sees for that article. If the publisher's page can't be fetched, the made-up text is also all the model reads. **Upgrade:** the client sends only `{q, url}`, and the server finds the article again in its own cached search results for `q`, rejecting URLs that weren't in them. The trade-off: once the cache expires, that lookup spends a GNews request, and a tab left open for over an hour can get a `400` for an article that has since dropped out of the results. Not built, because without accounts the bigger risk is cost abuse (below), and the real fix for both is auth or a rate limit.
 - **Server-side fetch of a client-supplied URL (SSRF).** Only `http(s)`, a 5s timeout, and the response is only parsed as text. That's acceptable on Vercel, which has no private network to reach. Self-hosting on a private network would need a host allowlist (marked `NOTE(shortcut):` in code).
 - **Prompt injection.** The fetched page text goes into the prompt, so a page could carry instructions aimed at the model. The damage is bounded: the model has no tools, and strict Structured Outputs only lets it return a `summary` string and one of three sentiment values. The worst case is a misleading summary or label on that one article, and React renders it as plain text, so it can't inject markup.
 - **Cost abuse (no auth, no rate limit).** The brief has no user accounts, so anyone with the URL can trigger LLM calls. The URL dedupe limits repeats. **Upgrade:** a Vercel Firewall rate-limit rule on `POST /api/analyses` (no code), or auth.
@@ -282,6 +285,7 @@ Each of these is a deliberate shortcut. The ones that live in code are marked `N
 | Regex text extraction | Sites with unusual markup | `@mozilla/readability` |
 | GNews free tier: 12h delay, 10 results, 100 requests/day | Real-time news, heavy use | Paid plan; only the URL/params change |
 | No auth / rate limit | Public traffic | Vercel Firewall rule; auth if analyses become per-user |
+| No alerting: errors only reach Vercel's function logs | Anything that breaks after a successful deploy, such as an expired key or GNews quota | Alert on the 5xx rate (Vercel Observability or a log drain). Not an uptime ping on `/api/articles`, which would spend the 100/day GNews quota |
 | One analysis per article | Comparing models/prompts, refreshing old ones | `articles` + `analyses` tables, "re-analyze" action |
 | Exact-URL dedupe | Same article behind tracking params (`?utm_…`) | Normalize the URL (strip `utm_*`) before lookup |
 

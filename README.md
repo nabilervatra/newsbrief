@@ -32,6 +32,8 @@ npm run dev                        # http://localhost:3000
 | `DATABASE_URL` | Postgres connection string |
 | `OPENAI_MODEL` | Optional, defaults to `gpt-6-luna` |
 
+`npm run build` and `npm run dev` stop with an error naming the variable if any of the first three is missing.
+
 No Postgres at hand? Use a throwaway local cluster (Homebrew `postgresql@17`):
 
 ```sh
