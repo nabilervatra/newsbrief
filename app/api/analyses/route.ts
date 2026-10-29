@@ -74,7 +74,7 @@ async function analyze(text: string): Promise<{ summary: string; sentiment: Sent
     headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
     signal: AbortSignal.timeout(30_000),
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-4.1-nano",
+      model: process.env.OPENAI_MODEL ?? "gpt-6-luna",
       messages: [
         { role: "system", content: PROMPT },
         { role: "user", content: text },

@@ -30,7 +30,7 @@ npm run dev                        # http://localhost:3000
 | `OPENAI_API_KEY` | OpenAI key |
 | `GNEWS_API_KEY` | Free key from https://gnews.io (100 requests/day) |
 | `DATABASE_URL` | Postgres connection string |
-| `OPENAI_MODEL` | Optional, defaults to `gpt-4.1-nano` |
+| `OPENAI_MODEL` | Optional, defaults to `gpt-6-luna` |
 
 No Postgres at hand? Use a throwaway local cluster (Homebrew `postgresql@17`):
 

@@ -213,7 +213,7 @@ The relationship is 1:1, and the product never re-analyzes an article, so a seco
 - **One call vs two** (one summary call, one sentiment call): one call halves cost and latency, and both outputs see the same context.
 - **Structured Outputs vs "reply in JSON" prompting:** strict JSON schema means the response always parses and the sentiment enum can't drift ("Positive.", "mixed").
 - **`fetch` vs the `openai` SDK:** one endpoint is about 20 lines of `fetch`. The SDK is worth adding for streaming, retries or a second endpoint.
-- **Model in `OPENAI_MODEL` (default `gpt-4.1-nano`):** the brief specified `gpt-4.1-nano`, and OpenAI has since retired it (the API returns `404 model deprecated`). The model is the value most likely to change over the app's life, so it's an environment variable, not a constant. No `temperature` is set, because newer reasoning models reject non-default values; the strict schema plus a written definition of sentiment keeps the output stable.
+- **Model in `OPENAI_MODEL` (default `gpt-6-luna`):** the brief specified `gpt-4.1-nano`, but OpenAI has since retired it (the API returns `404 model deprecated`), so the default is `gpt-6-luna`. The model is the value most likely to change over the app's life, so it's an environment variable, not a constant. No `temperature` is set, because newer reasoning models reject non-default values; the strict schema plus a written definition of sentiment keeps the output stable.
 
 ### 6.6 Getting the article text: fetch page, extract `<p>`, fall back
 
